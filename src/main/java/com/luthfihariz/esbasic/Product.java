@@ -1,9 +1,6 @@
 package com.luthfihariz.esbasic;
 
 import lombok.Data;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
 
 @Data
 public class Product {
@@ -13,3 +10,4 @@ public class Product {
     private Double price;
     private String category;
 }
+

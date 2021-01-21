@@ -1,13 +1,14 @@
 package com.luthfihariz.esbasic;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luthfihariz.esbasic.dto.FilterRequestDto;
 import com.luthfihariz.esbasic.dto.RangeFilterDto;
 import com.luthfihariz.esbasic.dto.SearchQueryDto;
-import com.luthfihariz.esbasic.dto.SortOrder;
 import org.elasticsearch.action.bulk.BulkRequest;
 import org.elasticsearch.action.bulk.BulkResponse;
-import org.elasticsearch.action.delete.DeleteRequest;
 import org.elasticsearch.action.index.IndexRequest;
+import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.client.RequestOptions;
@@ -18,15 +19,20 @@ import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.index.query.RangeQueryBuilder;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Repository;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.Map;
 
+@Repository
 public class ProductRepositoryImpl implements ProductRepository {
 
     @Autowired
     RestHighLevelClient restHighLevelClient;
+
+    @Autowired
+    ObjectMapper objectMapper;
 
     private static final String INDEX_NAME = "product";
 
@@ -84,61 +90,42 @@ public class ProductRepositoryImpl implements ProductRepository {
                 .size(searchQuery.getSize())
                 .query(boolQueryBuilder);
 
-        // sorting
-        if (searchQuery.getSort() != null) {
-            var sortOrder = org.elasticsearch.search.sort.SortOrder.ASC;
-            if (searchQuery.getSort().getOrder().equals(SortOrder.DESCENDING)) {
-                sortOrder = org.elasticsearch.search.sort.SortOrder.DESC;
-            }
-            searchSourceBuilder.sort(searchQuery.getSort().getField() + ".keyword", sortOrder);
-        }
-
         searchRequest.source(searchSourceBuilder);
         return restHighLevelClient.search(searchRequest, RequestOptions.DEFAULT);
     }
 
     @Override
-    public void save(Product product) throws IOException {
+    public IndexResponse save(Product product) throws IOException {
+
         IndexRequest indexRequest = Requests.indexRequest(INDEX_NAME)
                 .id(product.getId().toString())
-                .source(product);
+                .source(convertProductToMap(product));
 
         RequestOptions options = RequestOptions.DEFAULT;
-        restHighLevelClient.index(indexRequest, options);
+        return restHighLevelClient.index(indexRequest, options);
+    }
+
+    private Map<String, Object> convertProductToMap(Product product) throws JsonProcessingException {
+        String json = objectMapper.writeValueAsString(product);
+        return objectMapper.readValue(json, Map.class);
     }
 
     @Override
-    public void saveAll(List<Product> products) throws IOException {
+    public BulkResponse saveAll(List<Product> products) throws IOException {
 
         BulkRequest bulkRequest = Requests.bulkRequest();
-        IndexRequest indexRequest = Requests
-                .indexRequest(INDEX_NAME)
-                .source(products);
-        bulkRequest.add(indexRequest);
-
-        AtomicReference<Integer> failureCounter = new AtomicReference<>(0);
-
-        RequestOptions options = RequestOptions.DEFAULT;
-        BulkResponse responses = restHighLevelClient.bulk(bulkRequest, options);
-        responses.forEach(response -> {
-            if (response.isFailed()) {
-                failureCounter.getAndSet(failureCounter.get() + 1);
+        products.forEach(product -> {
+            try {
+                IndexRequest indexRequest = Requests
+                        .indexRequest(INDEX_NAME)
+                        .source(convertProductToMap(product));
+                bulkRequest.add(indexRequest);
+            } catch (JsonProcessingException e) {
+                // log error
             }
         });
 
-
-    }
-
-    @Override
-    public void delete(Integer productId) throws IOException {
-        DeleteRequest deleteRequest = Requests.deleteRequest(INDEX_NAME);
-        deleteRequest.id(productId.toString());
-        restHighLevelClient.delete(deleteRequest, RequestOptions.DEFAULT);
-    }
-
-    @Override
-    public void update(Integer productId, Product newProduct) throws IOException {
-        delete(productId);
-        save(newProduct);
+        RequestOptions options = RequestOptions.DEFAULT;
+        return restHighLevelClient.bulk(bulkRequest, options);
     }
 }
